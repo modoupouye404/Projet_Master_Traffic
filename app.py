@@ -1,4 +1,4 @@
-# app.py - Version avec affichage vidéo corrigé
+# app.py - Version optimisée pour Streamlit Cloud
 import streamlit as st
 import cv2
 import numpy as np
@@ -17,35 +17,50 @@ st.set_page_config(
 st.title("🚦 Détection de Véhicules - IA Prédictive")
 st.markdown("---")
 
-# Chargement du modèle
+# Chargement du modèle depuis Google Drive ou URL
 @st.cache_resource
 def load_model():
+    # Option 1: Modèle local (si uploadé)
     if os.path.exists('models/best.pt'):
         return YOLO('models/best.pt')
+    
+    # Option 2: Télécharger depuis Google Drive (liens publics)
+    # Créez un lien public: https://drive.google.com/uc?id=VOTRE_ID
+    drive_url = "https://drive.google.com/uc?id=VOTRE_ID_FICHIER"
+    
     try:
-        return YOLO('yolo11n.pt')
+        response = requests.get(drive_url, stream=True)
+        with open('best.pt', 'wb') as f:
+            f.write(response.content)
+        return YOLO('best.pt')
     except:
-        return None
+        # Option 3: Modèle par défaut
+        st.warning("⚠️ Modèle personnalisé non trouvé, utilisation du modèle par défaut")
+        return YOLO('yolo11n.pt')
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
+    
     confidence = st.slider("Seuil de confiance", 0.3, 0.9, 0.5, 0.05)
     skip_frames = st.slider("Accélération (1=normal, 3=rapide)", 1, 5, 2)
-    display_freq = st.slider("Fréquence d'affichage (1=toutes, 5=1/5)", 1, 10, 3)
+    
     st.markdown("---")
-    st.info("💡 Modèle YOLOv11")
+    st.subheader("🎨 Affichage")
+    show_speed = st.checkbox("Afficher les vitesses", True)
+    show_labels = st.checkbox("Afficher les labels", True)
+    
+    st.markdown("---")
+    st.info("💡 **Performance:**")
+    st.write("- FPS optimisé pour serveur Cloud")
+    st.write("- Traitement par lots disponible")
 
 # Charger le modèle
 with st.spinner("🔄 Chargement du modèle..."):
     model = load_model()
-    if model:
-        st.success("✅ Modèle chargé avec succès!")
-    else:
-        st.error("❌ Erreur de chargement")
-        st.stop()
+    st.success("✅ Modèle chargé avec succès!")
 
-# Tracker
+# Tracker optimisé
 class OptimizedTracker:
     def __init__(self):
         self.tracks = {}
@@ -70,8 +85,9 @@ class OptimizedTracker:
                      track['track_id'] * 137 % 255, 
                      track['track_id'] * 211 % 255)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"ID:{track['track_id']}", (x1, y1-5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            if show_labels:
+                cv2.putText(frame, f"ID:{track['track_id']}", (x1, y1-5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         return frame
 
 # Mode d'entrée
@@ -91,19 +107,18 @@ if mode == "🎥 Vidéo":
         
         st.video(video_path)
         
-        if st.button("🚀 Démarrer la détection", type="primary"):
+        if st.button("🚀 Démarrer la détection", type="primary", use_container_width=True):
             cap = cv2.VideoCapture(video_path)
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             
             tracker = OptimizedTracker()
             
-            # Interface - Créer un conteneur UNIQUE pour l'image
+            # Interface
             col_vid, col_stats = st.columns([2, 1])
             
             with col_vid:
-                # UN SEUL conteneur pour toute la vidéo
-                image_placeholder = st.empty()
+                video_placeholder = st.empty()
                 progress = st.progress(0)
             
             with col_stats:
@@ -111,16 +126,12 @@ if mode == "🎥 Vidéo":
                 vehicle_placeholder = st.empty()
                 fps_placeholder = st.empty()
                 congestion_placeholder = st.empty()
+                risk_placeholder = st.empty()
             
             frame_count = 0
             processed = 0
-            display_counter = 0
             start_time = time.time()
             vehicle_history = []
-            
-            # Variables pour stocker les résultats finaux
-            final_image = None
-            final_vehicles = 0
             
             while cap.isOpened():
                 ret, frame = cap.read()
@@ -129,11 +140,11 @@ if mode == "🎥 Vidéo":
                 
                 frame_count += 1
                 
-                # Skip frames
+                # Skip frames pour performance
                 if frame_count % skip_frames != 0:
                     continue
                 
-                # Redimensionner
+                # Redimensionner pour accélérer (optionnel)
                 h, w = frame.shape[:2]
                 if w > 640:
                     scale = 640 / w
@@ -161,21 +172,33 @@ if mode == "🎥 Vidéo":
                 n_vehicles = len(tracks)
                 vehicle_history.append(n_vehicles)
                 
-                # FPS
+                # Calcul FPS
                 elapsed = time.time() - start_time
                 fps_val = processed / elapsed if elapsed > 0 else 0
                 
                 # Congestion
                 congestion = min(100, int(n_vehicles * 8))
                 if congestion < 30:
-                    congestion_status = "Fluide"
                     congestion_color = "green"
+                    congestion_status = "Fluide"
                 elif congestion < 60:
-                    congestion_status = "Modéré"
                     congestion_color = "orange"
+                    congestion_status = "Modéré"
                 else:
-                    congestion_status = "Dense"
                     congestion_color = "red"
+                    congestion_status = "Dense"
+                
+                # Risque
+                risk = min(100, int(n_vehicles * 3))
+                if risk < 20:
+                    risk_color = "green"
+                    risk_level = "Faible"
+                elif risk < 50:
+                    risk_color = "orange"
+                    risk_level = "Modéré"
+                else:
+                    risk_color = "red"
+                    risk_level = "Élevé"
                 
                 # Ajouter texte
                 cv2.putText(annotated, f"FPS: {fps_val:.1f}", (10, 30),
@@ -183,42 +206,42 @@ if mode == "🎥 Vidéo":
                 cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
-                # Mise à jour stats (toujours à jour)
-                vehicle_placeholder.metric("🚗 Véhicules", n_vehicles)
-                fps_placeholder.metric("⚡ FPS", f"{fps_val:.1f}")
-                congestion_placeholder.markdown(f"""
-                <div style='background-color:{congestion_color}20; padding:10px; border-radius:10px; text-align:center'>
-                    <span>🚦 CONGESTION</span><br>
-                    <span style='font-size:2rem; color:{congestion_color}'>{congestion}%</span><br>
-                    <span>{congestion_status}</span>
-                </div>
-                """, unsafe_allow_html=True)
+                # Mise à jour interface
+                with vehicle_placeholder.container():
+                    st.metric("🚗 Véhicules", n_vehicles, 
+                             delta=f"{congestion_status}")
                 
-                # Affichage uniquement toutes les X frames
-                display_counter += 1
-                if display_counter >= display_freq:
-                    try:
-                        # Convertir en RGB
-                        annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                        # Remplacer l'image (même conteneur)
-                        image_placeholder.image(annotated_rgb, use_container_width=True)
-                        final_image = annotated_rgb
-                        final_vehicles = n_vehicles
-                        display_counter = 0
-                    except Exception as e:
-                        # En cas d'erreur, afficher la dernière image
-                        if final_image is not None:
-                            image_placeholder.image(final_image, use_container_width=True)
+                with fps_placeholder.container():
+                    st.metric("⚡ FPS", f"{fps_val:.1f}")
                 
+                with congestion_placeholder.container():
+                    st.markdown(f"""
+                    <div style='background-color:{congestion_color}20; padding:10px; border-radius:10px; text-align:center'>
+                        <span>🚦 CONGESTION</span><br>
+                        <span style='font-size:2rem; color:{congestion_color}'>{congestion}%</span><br>
+                        <span>{congestion_status}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with risk_placeholder.container():
+                    st.markdown(f"""
+                    <div style='background-color:{risk_color}20; padding:10px; border-radius:10px; text-align:center'>
+                        <span>⚠️ RISQUE</span><br>
+                        <span style='font-size:2rem; color:{risk_color}'>{risk}%</span><br>
+                        <span>{risk_level}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Affichage vidéo
+                video_placeholder.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
+                                       use_container_width=True)
                 progress.progress(frame_count / total_frames)
                 processed += 1
+                
+                # Petit délai pour éviter surcharge
                 time.sleep(0.005)
             
             cap.release()
-            
-            # Afficher la dernière image
-            if final_image is not None:
-                st.image(final_image, caption=f"Résultat final - {final_vehicles} véhicules détectés", use_container_width=True)
             
             st.success(f"✅ Analyse terminée! {processed} frames traitées")
             
@@ -252,7 +275,68 @@ if mode == "🎥 Vidéo":
 
 else:  # Webcam
     st.subheader("📹 Détection en Temps Réel")
-    st.warning("⚠️ La webcam peut ne pas fonctionner sur Streamlit Cloud. Utilisez le mode Vidéo.")
+    
+    run = st.button("▶️ Démarrer", type="primary")
+    stop = st.button("⏹️ Arrêter")
+    
+    if run:
+        cap = cv2.VideoCapture(0)
+        tracker = OptimizedTracker()
+        
+        video_placeholder = st.empty()
+        stats_placeholder = st.empty()
+        
+        frame_count = 0
+        start_time = time.time()
+        
+        while not stop:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            frame_count += 1
+            
+            # Redimensionner pour performance
+            h, w = frame.shape[:2]
+            if w > 640:
+                scale = 640 / w
+                frame = cv2.resize(frame, (640, int(h * scale)))
+            
+            results = model(frame, conf=confidence, verbose=False)
+            
+            detections = []
+            if results[0].boxes is not None:
+                for box in results[0].boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    detections.append({
+                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                        'confidence': float(box.conf[0].cpu().numpy())
+                    })
+            
+            tracks = tracker.update(detections)
+            annotated = tracker.visualize(frame.copy(), tracks)
+            
+            n_vehicles = len(tracks)
+            
+            elapsed = time.time() - start_time
+            fps_val = frame_count / elapsed if elapsed > 0 else 0
+            
+            cv2.putText(annotated, f"FPS: {fps_val:.1f}", (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            video_placeholder.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
+                                   use_container_width=True)
+            
+            with stats_placeholder.container():
+                col1, col2 = st.columns(2)
+                col1.metric("🚗 Véhicules", n_vehicles)
+                col2.metric("⚡ FPS", f"{fps_val:.1f}")
+            
+            time.sleep(0.03)
+        
+        cap.release()
 
 st.markdown("---")
-st.caption("🚦 Système de détection de véhicules - YOLOv11")
+st.caption("🚦 Système de détection de véhicules - YOLOv11 | IA Prédictive")
