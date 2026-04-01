@@ -1,4 +1,4 @@
-# app.py - Version avec affichage optimisé
+# app.py - Version stable avec conteneur unique
 import streamlit as st
 import numpy as np
 import tempfile
@@ -37,8 +37,8 @@ def load_model():
 with st.sidebar:
     st.header("⚙️ Paramètres")
     confidence = st.slider("Seuil de confiance", 0.3, 0.9, 0.5, 0.05)
-    display_freq = st.slider("Fréquence d'affichage", 1, 10, 3, 
-                              help="Plus la valeur est élevée, plus l'affichage est fluide")
+    update_interval = st.slider("Mise à jour (secondes)", 0.5, 3.0, 1.0, 0.5,
+                                 help="Intervalle entre les mises à jour de l'image")
     st.info("💡 Modèle YOLOv11 (yolo11n.pt)")
 
 # Charger le modèle
@@ -87,11 +87,12 @@ if uploaded:
         
         tracker = SimpleTracker()
         
-        # Interface
+        # Interface - Créer un conteneur unique pour l'image
         col_vid, col_stats = st.columns([2, 1])
         
         with col_vid:
-            video_placeholder = st.empty()
+            # Créer un conteneur qui sera réutilisé
+            image_container = st.empty()
             progress = st.progress(0)
         
         with col_stats:
@@ -101,12 +102,9 @@ if uploaded:
         
         frame_count = 0
         processed = 0
-        display_counter = 0
+        last_update_time = time.time()
         start_time = time.time()
         vehicle_history = []
-        
-        # Stocker la dernière image affichée
-        last_displayed_frame = None
         
         while cap.isOpened():
             ret, frame = cap.read()
@@ -167,27 +165,25 @@ if uploaded:
             cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            # Mise à jour des stats (toujours mise à jour)
+            # Mise à jour des stats (toujours à jour)
             vehicle_placeholder.metric("🚗 Véhicules", n_vehicles)
             fps_placeholder.metric("⚡ FPS", f"{fps_val:.1f}")
             
-            # Affichage uniquement toutes les X frames pour éviter l'erreur DOM
-            display_counter += 1
-            if display_counter >= display_freq:
+            # Mise à jour de l'image avec intervalle de temps
+            current_time = time.time()
+            if current_time - last_update_time >= update_interval:
                 try:
-                    # Convertir BGR en RGB pour Streamlit
+                    # Convertir BGR en RGB
                     annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                    video_placeholder.image(annotated_rgb, use_container_width=True)
-                    last_displayed_frame = annotated_rgb
-                    display_counter = 0
+                    # Réutiliser le même conteneur
+                    image_container.image(annotated_rgb, use_container_width=True)
+                    last_update_time = current_time
                 except Exception as e:
-                    # En cas d'erreur, réutiliser la dernière frame
-                    if last_displayed_frame is not None:
-                        video_placeholder.image(last_displayed_frame, use_container_width=True)
+                    pass
             
             progress.progress(frame_count / total_frames)
             processed += 1
-            time.sleep(0.005)
+            time.sleep(0.001)
         
         cap.release()
         
