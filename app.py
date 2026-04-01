@@ -1,12 +1,12 @@
-# app.py - Version corrigée pour Streamlit Cloud
+# app.py - Version sans OpenCV pour l'affichage
 import streamlit as st
-import cv2
 import numpy as np
 from ultralytics import YOLO
 import tempfile
 import time
 import os
-import requests
+from PIL import Image
+import io
 
 st.set_page_config(
     page_title="Traffic Detection System",
@@ -59,17 +59,38 @@ class SimpleTracker:
             })
             self.next_id += 1
         return tracks
+
+# Fonction pour dessiner sur l'image avec PIL
+def draw_boxes_pil(image_array, tracks):
+    """Dessine les bounding boxes avec PIL"""
+    # Convertir numpy array en PIL Image
+    if image_array.dtype != np.uint8:
+        image_array = image_array.astype(np.uint8)
     
-    def visualize(self, frame, tracks):
-        for track in tracks:
-            x1, y1, x2, y2 = track['bbox']
-            color = (track['track_id'] * 73 % 255, 
-                     track['track_id'] * 137 % 255, 
-                     track['track_id'] * 211 % 255)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"ID:{track['track_id']}", (x1, y1-5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        return frame
+    # Si l'image est en BGR, convertir en RGB
+    if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+        # Vérifier si c'est BGR (OpenCV) ou RGB
+        # On suppose que c'est RGB pour l'instant
+        pil_img = Image.fromarray(image_array)
+    else:
+        pil_img = Image.fromarray(image_array)
+    
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(pil_img)
+    
+    for track in tracks:
+        x1, y1, x2, y2 = track['bbox']
+        color = (track['track_id'] * 73 % 255, 
+                 track['track_id'] * 137 % 255, 
+                 track['track_id'] * 211 % 255)
+        
+        # Dessiner le rectangle
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+        
+        # Dessiner le texte
+        draw.text((x1, y1-15), f"ID:{track['track_id']}", fill=color)
+    
+    return np.array(pil_img)
 
 # Mode d'entrée
 mode = st.radio("Source", ["🎥 Vidéo", "📹 Webcam"], horizontal=True)
@@ -89,6 +110,9 @@ if mode == "🎥 Vidéo":
         st.video(video_path)
         
         if st.button("🚀 Démarrer la détection", type="primary"):
+            # Importer cv2 UNIQUEMENT ici pour la lecture vidéo
+            import cv2
+            
             cap = cv2.VideoCapture(video_path)
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -132,8 +156,11 @@ if mode == "🎥 Vidéo":
                     new_h = int(h * scale)
                     frame = cv2.resize(frame, (new_w, new_h))
                 
+                # Convertir BGR en RGB pour YOLO
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
                 # Détection
-                results = model(frame, conf=confidence, verbose=False)
+                results = model(frame_rgb, conf=confidence, verbose=False)
                 
                 # Extraire détections
                 detections = []
@@ -148,16 +175,8 @@ if mode == "🎥 Vidéo":
                 # Tracking
                 tracks = tracker.update(detections)
                 
-                # Visualisation
-                annotated = frame.copy()
-                for track in tracks:
-                    x1, y1, x2, y2 = track['bbox']
-                    color = (track['track_id'] * 73 % 255, 
-                             track['track_id'] * 137 % 255, 
-                             track['track_id'] * 211 % 255)
-                    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(annotated, f"ID:{track['track_id']}", (x1, y1-5),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                # Visualisation avec PIL
+                annotated = draw_boxes_pil(frame_rgb, tracks)
                 
                 n_vehicles = len(tracks)
                 vehicle_history.append(n_vehicles)
@@ -178,23 +197,24 @@ if mode == "🎥 Vidéo":
                     congestion_status = "Dense"
                     congestion_color = "red"
                 
-                # Ajouter texte
-                cv2.putText(annotated, f"FPS: {fps_val:.1f}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(annotated, f"Congestion: {congestion}%", (10, 90),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                # Ajouter du texte avec PIL
+                from PIL import ImageDraw, ImageFont
+                pil_img = Image.fromarray(annotated)
+                draw = ImageDraw.Draw(pil_img)
                 
-                # Affichage - CORRECTION ICI
                 try:
-                    # Convertir BGR en RGB pour Streamlit
-                    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                    video_placeholder.image(annotated_rgb, use_container_width=True)
-                except Exception as e:
-                    # Fallback: afficher directement
-                    video_placeholder.image(annotated, channels="BGR", use_container_width=True)
+                    font = ImageFont.load_default()
+                except:
+                    font = ImageFont.load_default()
                 
+                draw.text((10, 30), f"FPS: {fps_val:.1f}", fill=(0, 255, 0), font=font)
+                draw.text((10, 60), f"Vehicules: {n_vehicles}", fill=(0, 255, 0), font=font)
+                draw.text((10, 90), f"Congestion: {congestion}%", fill=(0, 255, 0), font=font)
+                
+                annotated = np.array(pil_img)
+                
+                # Affichage
+                video_placeholder.image(annotated, use_container_width=True)
                 progress.progress(frame_count / total_frames)
                 
                 # Mise à jour stats
@@ -234,82 +254,7 @@ if mode == "🎥 Vidéo":
 
 else:  # Webcam
     st.subheader("📹 Détection en Temps Réel")
-    
-    run = st.button("▶️ Démarrer", type="primary")
-    stop = st.button("⏹️ Arrêter")
-    
-    if run:
-        cap = cv2.VideoCapture(0)
-        tracker = SimpleTracker()
-        
-        video_placeholder = st.empty()
-        stats_placeholder = st.empty()
-        
-        frame_count = 0
-        start_time = time.time()
-        
-        while not stop:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            frame_count += 1
-            
-            # Redimensionner
-            h, w = frame.shape[:2]
-            if w > 640:
-                frame = cv2.resize(frame, (640, int(h * 640 / w)))
-            
-            # Détection
-            results = model(frame, conf=confidence, verbose=False)
-            
-            detections = []
-            if results[0].boxes is not None:
-                for box in results[0].boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    detections.append({
-                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                        'confidence': float(box.conf[0].cpu().numpy())
-                    })
-            
-            tracks = tracker.update(detections)
-            
-            # Visualisation
-            annotated = frame.copy()
-            for track in tracks:
-                x1, y1, x2, y2 = track['bbox']
-                color = (track['track_id'] * 73 % 255, 
-                         track['track_id'] * 137 % 255, 
-                         track['track_id'] * 211 % 255)
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(annotated, f"ID:{track['track_id']}", (x1, y1-5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
-            n_vehicles = len(tracks)
-            
-            elapsed = time.time() - start_time
-            fps_val = frame_count / elapsed if elapsed > 0 else 0
-            
-            cv2.putText(annotated, f"FPS: {fps_val:.1f}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            # Affichage
-            try:
-                annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                video_placeholder.image(annotated_rgb, use_container_width=True)
-            except:
-                video_placeholder.image(annotated, channels="BGR", use_container_width=True)
-            
-            with stats_placeholder.container():
-                col1, col2 = st.columns(2)
-                col1.metric("🚗 Véhicules", n_vehicles)
-                col2.metric("⚡ FPS", f"{fps_val:.1f}")
-            
-            time.sleep(0.03)
-        
-        cap.release()
+    st.warning("⚠️ La webcam n'est pas supportée sur Streamlit Cloud. Utilisez le mode Vidéo.")
 
 st.markdown("---")
 st.caption("🚦 Système de détection de véhicules - YOLOv11")
