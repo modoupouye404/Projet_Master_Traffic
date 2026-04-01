@@ -1,4 +1,4 @@
-# app.py - Version optimisée pour Streamlit Cloud
+# app.py - Version ultra simplifiée pour Streamlit Cloud
 import streamlit as st
 import cv2
 import numpy as np
@@ -9,45 +9,45 @@ import os
 
 st.set_page_config(page_title="Traffic Detection", layout="wide")
 
-st.title("🚦 Détection de Véhicules - IA Prédictive")
+st.title("🚦 Détection de Véhicules - YOLOv11")
 st.markdown("---")
 
-# Chargement du modèle avec fallback
+# Chargement du modèle
 @st.cache_resource
 def load_model():
     try:
         # Essayer de charger le modèle personnalisé
-        model = YOLO('models/best.pt')
-        return model
-    except:
-        try:
-            # Si pas trouvé, utiliser le modèle par défaut
+        if os.path.exists('models/best.pt'):
+            model = YOLO('models/best.pt')
+        else:
+            # Sinon utiliser le modèle par défaut
             model = YOLO('yolo11n.pt')
-            st.info("📌 Modèle par défaut chargé")
-            return model
-        except:
-            st.error("❌ Aucun modèle disponible")
-            return None
+        return model
+    except Exception as e:
+        st.error(f"Erreur de chargement du modèle: {e}")
+        return None
 
 model = load_model()
 
 if model is None:
+    st.warning("⚠️ Modèle non disponible. Utilisation du mode démo.")
     st.stop()
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Paramètres")
     confidence = st.slider("Seuil de confiance", 0.3, 0.9, 0.5, 0.05)
-    skip_frames = st.slider("Accélération", 1, 5, 2)
     
     st.markdown("---")
-    st.info("💡 **Info:** Modèle YOLOv11")
+    st.info("💡 **Modèle:** YOLOv11")
+    st.caption("Détection de véhicules en temps réel")
 
 # Upload vidéo
+st.subheader("📹 Uploader une vidéo")
 uploaded = st.file_uploader("Choisissez une vidéo", type=['mp4', 'avi', 'mov'])
 
 if uploaded:
-    # Sauvegarder temporairement
+    # Sauvegarder
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile.write(uploaded.read())
     video_path = tfile.name
@@ -60,15 +60,22 @@ if uploaded:
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Placeholders
-        video_placeholder = st.empty()
-        progress_bar = st.progress(0)
-        stats_placeholder = st.empty()
+        # Interface
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            video_placeholder = st.empty()
+            progress_bar = st.progress(0)
+        
+        with col2:
+            st.markdown("### 📊 Statistiques")
+            vehicle_placeholder = st.empty()
+            fps_placeholder = st.empty()
+            congestion_placeholder = st.empty()
         
         frame_count = 0
         processed = 0
         start_time = time.time()
-        vehicle_history = []
         
         while cap.isOpened():
             ret, frame = cap.read()
@@ -77,8 +84,8 @@ if uploaded:
             
             frame_count += 1
             
-            # Skip frames
-            if frame_count % skip_frames != 0:
+            # Traiter 1 frame sur 2 pour accélérer
+            if frame_count % 2 != 0:
                 continue
             
             # Redimensionner pour performance
@@ -90,70 +97,50 @@ if uploaded:
                 frame = cv2.resize(frame, (new_w, new_h))
             
             # Détection
-            try:
-                results = model(frame, conf=confidence, verbose=False)
-                annotated = results[0].plot()
-                
-                n_vehicles = len(results[0].boxes) if results[0].boxes else 0
-                vehicle_history.append(n_vehicles)
-                
-                # FPS
-                elapsed = time.time() - start_time
-                fps_val = processed / elapsed if elapsed > 0 else 0
-                
-                # Congestion
-                congestion = min(100, int(n_vehicles * 6))
-                if congestion < 30:
-                    congestion_status = "Fluide 🟢"
-                elif congestion < 60:
-                    congestion_status = "Modéré 🟡"
-                else:
-                    congestion_status = "Dense 🔴"
-                
-                # Texte
-                cv2.putText(annotated, f"FPS: {fps_val:.1f}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-                cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-                cv2.putText(annotated, f"Congestion: {congestion}%", (10, 90),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-                
-                # Affichage
-                video_placeholder.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
-                                       use_container_width=True)
-                
-                # Stats
-                with stats_placeholder.container():
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("🚗 Véhicules", n_vehicles)
-                    col2.metric("⚡ FPS", f"{fps_val:.1f}")
-                    col3.metric("📊 Congestion", congestion_status)
-                
-                progress_bar.progress(frame_count / total_frames)
-                processed += 1
-                
-            except Exception as e:
-                continue
+            results = model(frame, conf=confidence, verbose=False)
+            annotated = results[0].plot()
+            
+            n_vehicles = len(results[0].boxes) if results[0].boxes else 0
+            
+            # FPS
+            elapsed = time.time() - start_time
+            fps_val = processed / elapsed if elapsed > 0 else 0
+            
+            # Congestion
+            congestion = min(100, int(n_vehicles * 8))
+            if congestion < 30:
+                congestion_text = "🟢 Fluide"
+            elif congestion < 60:
+                congestion_text = "🟡 Modéré"
+            else:
+                congestion_text = "🔴 Dense"
+            
+            # Texte sur l'image
+            cv2.putText(annotated, f"FPS: {fps_val:.1f}", (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+            cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+            cv2.putText(annotated, f"Congestion: {congestion}%", (10, 90),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+            
+            # Affichage
+            video_placeholder.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
+                                   use_container_width=True)
+            progress_bar.progress(frame_count / total_frames)
+            
+            # Statistiques
+            with vehicle_placeholder:
+                st.metric("🚗 Véhicules", n_vehicles)
+            with fps_placeholder:
+                st.metric("⚡ FPS", f"{fps_val:.1f}")
+            with congestion_placeholder:
+                st.metric("📊 Congestion", congestion_text)
+            
+            processed += 1
         
         cap.release()
-        
         st.success(f"✅ Analyse terminée! {processed} frames traitées")
-        
-        # Graphique
-        if vehicle_history:
-            import plotly.graph_objects as go
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(y=vehicle_history, mode='lines', 
-                                    name='Véhicules', line=dict(color='#2ecc71', width=2)))
-            fig.update_layout(
-                title="Évolution du trafic",
-                xaxis_title="Frame",
-                yaxis_title="Nombre de véhicules",
-                height=300
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
         os.unlink(video_path)
 
 st.markdown("---")
-st.caption("🚦 Système de détection de véhicules - YOLOv11")
+st.caption("🚦 Système de détection de véhicules avec YOLOv11")
