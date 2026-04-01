@@ -1,4 +1,4 @@
-# app.py - Version fonctionnelle sur Streamlit Cloud
+# app.py - Version avec affichage optimisé
 import streamlit as st
 import numpy as np
 import tempfile
@@ -14,21 +14,19 @@ st.set_page_config(
 st.title("🚦 Détection de Véhicules")
 st.markdown("---")
 
-# Importation conditionnelle pour éviter les erreurs
+# Importation
 try:
     from ultralytics import YOLO
     import cv2
     YOLO_AVAILABLE = True
 except Exception as e:
     st.error(f"Erreur d'import: {e}")
-    YOLO_AVAILABLE = False
     st.stop()
 
 # Chargement du modèle
 @st.cache_resource
 def load_model():
     try:
-        # Essayer le modèle par défaut
         model = YOLO('yolo11n.pt')
         return model
     except Exception as e:
@@ -39,6 +37,8 @@ def load_model():
 with st.sidebar:
     st.header("⚙️ Paramètres")
     confidence = st.slider("Seuil de confiance", 0.3, 0.9, 0.5, 0.05)
+    display_freq = st.slider("Fréquence d'affichage", 1, 10, 3, 
+                              help="Plus la valeur est élevée, plus l'affichage est fluide")
     st.info("💡 Modèle YOLOv11 (yolo11n.pt)")
 
 # Charger le modèle
@@ -101,8 +101,12 @@ if uploaded:
         
         frame_count = 0
         processed = 0
+        display_counter = 0
         start_time = time.time()
         vehicle_history = []
+        
+        # Stocker la dernière image affichée
+        last_displayed_frame = None
         
         while cap.isOpened():
             ret, frame = cap.read()
@@ -163,14 +167,25 @@ if uploaded:
             cv2.putText(annotated, f"Vehicules: {n_vehicles}", (10, 60),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            # Affichage
-            video_placeholder.image(annotated, channels="BGR", use_container_width=True)
-            progress.progress(frame_count / total_frames)
-            
-            # Stats
+            # Mise à jour des stats (toujours mise à jour)
             vehicle_placeholder.metric("🚗 Véhicules", n_vehicles)
             fps_placeholder.metric("⚡ FPS", f"{fps_val:.1f}")
             
+            # Affichage uniquement toutes les X frames pour éviter l'erreur DOM
+            display_counter += 1
+            if display_counter >= display_freq:
+                try:
+                    # Convertir BGR en RGB pour Streamlit
+                    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+                    video_placeholder.image(annotated_rgb, use_container_width=True)
+                    last_displayed_frame = annotated_rgb
+                    display_counter = 0
+                except Exception as e:
+                    # En cas d'erreur, réutiliser la dernière frame
+                    if last_displayed_frame is not None:
+                        video_placeholder.image(last_displayed_frame, use_container_width=True)
+            
+            progress.progress(frame_count / total_frames)
             processed += 1
             time.sleep(0.005)
         
